@@ -2,8 +2,9 @@
 from PMS import *
 from PMS.Objects import *
 from PMS.Shortcuts import *
+from BeautifulSoup import BeautifulStoneSoup as BSS
 
-import re, htmlentitydefs
+import re
 
 ####################################################################################################
 
@@ -124,57 +125,64 @@ def GetCollections(sender):
 
 def ShowCollection(sender):
     u = Prefs.Get('username')
-    if (sender.itemTitle == "Owned"):
-        url_params = '%s?own=1' % u
-    else:
+    if (sender.itemTitle == "Wishlist"):
         url_params = '%s?wishlist=1' % u
+    else:
+        url_params = '%s?own=1' % u
     collection_xml = XML.ElementFromURL(API_URL % 'collection/%s' % url_params)
     boardgames = collection_xml.findall('item')
-    games_list = []
-    for game in boardgames:
-        games_list.append(game.get('objectid'))
-    
-    games_query = ",".join(games_list)
-    games_xml = XML.ElementFromURL(API_URL % 'boardgame/%s' % games_query)
-    dir = MediaContainer(viewGroup="InfoList")
-    for game in games_xml:
-        try:
-            thumbnail=game.find('image').text
-        except AttributeError, e:
-            thumbnail=R(ICON)
-        dir.Append(
-            Function(
-                DirectoryItem(
-                    GetCollections,
-                    game.find('.//name[@primary]').text,
-                    # subtitle=game.find('boardgamepublisher').text,
-                    summary=strip_html(game.find('description').text),
-                    # summary=XML.StringFromElement(game.find('description'), method="xml"),
-                    thumb=thumbnail,
-                    art=R(ART)
-                )
-            )
-        )
-    return dir
+    return build_menu_from_xml(boardgames, "%s: %s" % (u, sender.itemTitle))
     
 
-# Part of the "search" example 
-# query will contain the string that the user entered
-# see also:
-#   http://dev.plexapp.com/docs/Objects.html#InputDirectoryItem
 def SearchResults(sender,query=None):
     try:
         search_xml = XML.ElementFromURL(API_URL % 'search?search=%s' % query)
     except HTTPError, e:
         Log(e.code)
     boardgames = search_xml.findall('boardgame')
+    return build_menu_from_xml(boardgames, "Search: %s" % query)
+
+def GameDetails(sender, game_id=None):
+    games_xml = XML.ElementFromURL(API_URL % 'boardgame/%s' % game_id)
+    game = games_xml.find('boardgame')
+    dir = MediaContainer(viewGroup="InfoList", title2=sender.itemTitle)
+    summary = game.find('description').text.replace('<br/>',"\n").replace("\n\n", "\n").replace("\n\n", "\n")
+    soup = BSS(summary, convertEntities=BSS.HTML_ENTITIES)
+    summary = soup.contents[0]
+    dir.Append(
+        Function(
+            DirectoryItem(
+                GameDetails,
+                title=sender.itemTitle,
+                subtitle="Description",
+                summary=summary,
+                thumb=game.find('image').text
+            )
+        )
+    )
+    publishers = []
+    for publisher in game.findall('boardgamepublisher'):
+        publishers.append(publisher.text)
+    publishers = "\n".join(publishers)
+    dir.Append(
+        Function(
+            DirectoryItem(
+                GameDetails,
+                title="Publishers",
+                summary=publishers,
+            )
+        )
+    )
+    return dir
+
+def build_menu_from_xml(boardgames, title="Games"):
     games_list = []
     for game in boardgames:
         games_list.append(game.get('objectid'))
     
     games_query = ",".join(games_list)
     games_xml = XML.ElementFromURL(API_URL % 'boardgame/%s' % games_query)
-    dir = MediaContainer(viewGroup="InfoList")
+    dir = MediaContainer(viewGroup="InfoList", title2=title)
     for game in games_xml:
         try:
             thumbnail=game.find('image').text
@@ -183,18 +191,15 @@ def SearchResults(sender,query=None):
         dir.Append(
             Function(
                 DirectoryItem(
-                    GetCollections,
-                    game.find('.//name[@primary]').text,
-                    # subtitle=game.find('boardgamepublisher').text,
+                    GameDetails,
+                    title=game.find('.//name[@primary]').text,
                     summary=strip_html(game.find('description').text),
-                    # summary=XML.StringFromElement(game.find('description'), method="xml"),
-                    thumb=thumbnail,
-                    art=R(ART)
-                )
+                    thumb=thumbnail
+                ), game_id=game.get('objectid')
             )
         )
     return dir
-
+    
 
 def strip_html(text):
     def fixup(m):
